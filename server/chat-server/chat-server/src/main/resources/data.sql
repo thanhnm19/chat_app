@@ -1,2 +1,2 @@
-INSERT INTO users (username, password) VALUES ('Alice', '123456');
-INSERT INTO users (username, password) VALUES ('Bob', '123456');
+INSERT IGNORE INTO users (username, password, online)
+VALUES ('Alice', '123456', false);

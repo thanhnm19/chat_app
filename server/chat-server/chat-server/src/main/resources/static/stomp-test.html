@@ -1,72 +1,175 @@
 <!DOCTYPE html>
-<html>
+<html lang="vi">
 <head>
     <meta charset="UTF-8" />
-    <title>Chat Test</title>
+    <title>WebSocket Chat App</title>
     <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+    <style>
+        body { font-family: sans-serif; margin: 20px; }
+        input, button { padding: 6px; margin: 3px; }
+        #chatArea { display: none; }
+        #messages { border: 1px solid #ddd; padding: 10px; height: 250px; overflow-y: auto; }
+        #onlineUsers { margin-top: 10px; }
+        .private { color: blue; }
+        .system { color: gray; font-style: italic; }
+    </style>
 </head>
 <body>
-<h2>WebSocket Chat Test</h2>
+<h2>💬 WebSocket Chat App</h2>
 
-<div>
-    <input id="username" placeholder="Tên bạn" />
-    <button onclick="connect()">Kết nối</button>
+<!-- Khu vực đăng nhập -->
+<div id="authArea">
+    <h3>Đăng ký / Đăng nhập</h3>
+    <input id="username" placeholder="Tên đăng nhập" />
+    <input id="password" type="password" placeholder="Mật khẩu" />
+    <button onclick="register()">Đăng ký</button>
+    <button onclick="login()">Đăng nhập</button>
 </div>
 
-<div style="margin-top:10px;">
-    <input id="receiver" placeholder="Tên người nhận (để trống nếu nhóm)" />
-    <input id="message" placeholder="Nội dung" />
-    <button onclick="send()">Gửi</button>
-</div>
+<!-- Khu vực chat -->
+<div id="chatArea">
+    <h3>Xin chào, <span id="currentUser"></span>!</h3>
+    <button onclick="logout()">Đăng xuất</button>
+    <div>
+        <input id="receiver" placeholder="Người nhận (để trống = nhóm)" />
+        <input id="message" placeholder="Nội dung" />
+        <button onclick="send()">Gửi</button>
+    </div>
 
-<h3>Tin nhắn:</h3>
-<ul id="messages"></ul>
+    <h4>🟢 Người đang online:</h4>
+    <ul id="onlineUsers"></ul>
+
+    <h4>💬 Tin nhắn:</h4>
+    <ul id="messages"></ul>
+</div>
 
 <script>
     let stompClient = null;
+    let username = null;
 
-    function connect() {
-        const username = document.getElementById("username").value;
-        if (!username) return alert("Nhập tên trước");
+    // ========== ĐĂNG KÝ / ĐĂNG NHẬP ==========
+    async function register() {
+        const u = usernameInput(), p = passwordInput();
+        if (!u || !p) return alert("Nhập username và password");
+        const res = await fetch("/api/auth/register", {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({username: u, password: p})
+        });
+        const text = await res.text();
+        alert(text);
+    }
 
-        const socket = new SockJS("/ws-chat");
+    async function login() {
+        const u = usernameInput(), p = passwordInput();
+        if (!u || !p) return alert("Nhập username và password");
+
+        const res = await fetch("/api/auth/login", {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({username: u, password: p})
+        });
+
+        if (res.ok) {
+            const user = await res.json();
+            username = user.username;
+
+            document.getElementById("authArea").style.display = "none";
+            document.getElementById("chatArea").style.display = "block";
+            document.getElementById("currentUser").innerText = username;
+
+            connectSocket();
+            loadOnline(); // initial list
+        } else {
+            alert(await res.text() || "Đăng nhập thất bại!");
+        }
+    }
+
+    async function logout() {
+        if (stompClient) stompClient.disconnect();
+        await fetch(`/api/auth/logout?username=${username}`, {method: "POST"});
+        document.getElementById("authArea").style.display = "block";
+        document.getElementById("chatArea").style.display = "none";
+        username = null;
+    }
+
+    // ========== WEBSOCKET ==========
+    function connectSocket() {
+        const socket = new SockJS(`http://localhost:8080/ws-chat?user=${username}`);
         stompClient = Stomp.over(socket);
-        stompClient.connect({}, (frame) => {
-            console.log("✅ Connected as", username);
 
-            // Subscribes
+        stompClient.connect({}, () => {
+            console.log("✅ Connected as " + username);
+
             stompClient.subscribe("/topic/messages", (msg) => show(JSON.parse(msg.body)));
             stompClient.subscribe("/user/queue/private", (msg) => show(JSON.parse(msg.body)));
 
-            // Gửi login
+            // 🔥 Nhận danh sách online cập nhật theo thời gian thực
+            stompClient.subscribe("/topic/status", (msg) => {
+                const users = JSON.parse(msg.body);
+                console.log("📡 Received /topic/status:", users);
+                updateOnlineList(users);
+            });
+
             stompClient.send("/app/login", {}, JSON.stringify({ sender: username }));
         });
     }
 
-    function send() {
-        const sender = document.getElementById("username").value;
-        const receiver = document.getElementById("receiver").value;
-        const content = document.getElementById("message").value;
+    // ========== GỬI TIN NHẮN ==========
+    async function send() {
+        const receiver = document.getElementById("receiver").value.trim();
+        const content = document.getElementById("message").value.trim();
+        if (!content) return;
+        const msg = { sender: username, receiver, content };
 
-        if (!sender || !content) return;
-
-        const msg = { sender, receiver, content };
-
-        if (receiver.trim() === "") {
-            stompClient.send("/app/chat", {}, JSON.stringify(msg)); // nhóm
+        if (receiver === "") {
+            stompClient.send("/app/chat", {}, JSON.stringify(msg));
         } else {
-            stompClient.send("/app/private", {}, JSON.stringify(msg)); // riêng
+            const res = await fetch("/api/auth/online");
+            const users = await res.json();
+            const target = users.find(u => u.username === receiver && u.online);
+            if (!target) {
+                show({ sender: "System", content: receiver + " hiện đang offline!", type: "SYSTEM", timestamp: new Date().toISOString() });
+                return;
+            }
+            stompClient.send("/app/private", {}, JSON.stringify(msg));
         }
-
         document.getElementById("message").value = "";
     }
 
+    // ========== HIỂN THỊ ==========
     function show(msg) {
         const li = document.createElement("li");
-        li.textContent = `[${msg.timestamp}] ${msg.sender}: ${msg.content}`;
+        const time = msg.timestamp ? `[${new Date(msg.timestamp).toLocaleTimeString()}] ` : "";
+        li.textContent = `${time}${msg.sender}: ${msg.content}`;
+        if (msg.type === "PRIVATE") li.classList.add("private");
+        if (msg.type === "SYSTEM") li.classList.add("system");
         document.getElementById("messages").appendChild(li);
     }
+
+    function updateOnlineList(users) {
+        const list = document.getElementById("onlineUsers");
+        list.innerHTML = "";
+        users.forEach(u => {
+            const li = document.createElement("li");
+            li.textContent = u.username + (u.online ? " ✅" : "");
+            list.appendChild(li);
+        });
+    }
+
+    // ========== LẤY ONLINE BAN ĐẦU ==========
+    async function loadOnline() {
+        const res = await fetch("/api/auth/online");
+        const users = await res.json();
+        updateOnlineList(users);
+    }
+
+    // ========== ĐĂNG XUẤT KHI ĐÓNG TRANG ==========
+    window.addEventListener("beforeunload", () => {
+        if (username) fetch(`/api/auth/logout?username=${username}`, {method: "POST"});
+    });
+
+    const usernameInput = () => document.getElementById("username").value.trim();
+    const passwordInput = () => document.getElementById("password").value.trim();
 </script>
 </body>
 </html>

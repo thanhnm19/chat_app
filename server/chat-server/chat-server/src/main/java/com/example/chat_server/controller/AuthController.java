@@ -1,31 +1,53 @@
 package com.example.chat_server.controller;
 
 import com.example.chat_server.model.User;
-import com.example.chat_server.repository.UserRepository;
 import com.example.chat_server.service.UserService;
-
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-
 import java.util.List;
+import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/auth")
-@CrossOrigin("*")
+@CrossOrigin(origins = "*")
 public class AuthController {
+
     private final UserService userService;
-    public AuthController(UserService userService) { this.userService = userService; }
+
+    public AuthController(UserService userService) {
+        this.userService = userService;
+    }
 
     @PostMapping("/register")
-    public String register(@RequestBody User user) { return userService.register(user); }
+    public ResponseEntity<?> register(@RequestBody User user) {
+        Optional<User> registeredUser = userService.register(user);
+
+        if (registeredUser.isPresent()) {
+            return ResponseEntity.ok(registeredUser.get());
+        } else {
+            return ResponseEntity.badRequest().body("User already exists");
+        }
+    }
 
     @PostMapping("/login")
-    public String login(@RequestBody User user) { return userService.login(user); }
+    public ResponseEntity<?> login(@RequestBody User user) {
+        Optional<User> loggedInUser = userService.login(user);
+
+        if (loggedInUser.isPresent()) {
+            return ResponseEntity.ok(loggedInUser.get());
+        } else {
+            return ResponseEntity.status(401).body("Invalid username or password");
+        }
+    }
 
     @PostMapping("/logout")
-    public void logout(@RequestParam String username) { userService.setOnline(username, false); }
+    public ResponseEntity<?> logout(@RequestParam String username) {
+        userService.setOnline(username, false);
+        return ResponseEntity.ok("Logged out successfully");
+    }
 
     @GetMapping("/online")
-    public List<User> getOnlineUsers() { return userService.getOnlineUsers(); }
+    public ResponseEntity<List<User>> getOnlineUsers() {
+        return ResponseEntity.ok(userService.getOnlineUsers());
+    }
 }
-
