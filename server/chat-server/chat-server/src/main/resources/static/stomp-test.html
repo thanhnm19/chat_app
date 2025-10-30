@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8" />
+    <title>Chat Test</title>
+    <script src="https://cdn.jsdelivr.net/npm/sockjs-client@1/dist/sockjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/stompjs@2.3.3/lib/stomp.min.js"></script>
+</head>
+<body>
+<h2>WebSocket Chat Test</h2>
+
+<div>
+    <input id="username" placeholder="Tên bạn" />
+    <button onclick="connect()">Kết nối</button>
+</div>
+
+<div style="margin-top:10px;">
+    <input id="receiver" placeholder="Tên người nhận (để trống nếu nhóm)" />
+    <input id="message" placeholder="Nội dung" />
+    <button onclick="send()">Gửi</button>
+</div>
+
+<h3>Tin nhắn:</h3>
+<ul id="messages"></ul>
+
+<script>
+    let stompClient = null;
+
+    function connect() {
+        const username = document.getElementById("username").value;
+        if (!username) return alert("Nhập tên trước");
+
+        const socket = new SockJS("/ws-chat");
+        stompClient = Stomp.over(socket);
+        stompClient.connect({}, (frame) => {
+            console.log("✅ Connected as", username);
+
+            // Subscribes
+            stompClient.subscribe("/topic/messages", (msg) => show(JSON.parse(msg.body)));
+            stompClient.subscribe("/user/queue/private", (msg) => show(JSON.parse(msg.body)));
+
+            // Gửi login
+            stompClient.send("/app/login", {}, JSON.stringify({ sender: username }));
+        });
+    }
+
+    function send() {
+        const sender = document.getElementById("username").value;
+        const receiver = document.getElementById("receiver").value;
+        const content = document.getElementById("message").value;
+
+        if (!sender || !content) return;
+
+        const msg = { sender, receiver, content };
+
+        if (receiver.trim() === "") {
+            stompClient.send("/app/chat", {}, JSON.stringify(msg)); // nhóm
+        } else {
+            stompClient.send("/app/private", {}, JSON.stringify(msg)); // riêng
+        }
+
+        document.getElementById("message").value = "";
+    }
+
+    function show(msg) {
+        const li = document.createElement("li");
+        li.textContent = `[${msg.timestamp}] ${msg.sender}: ${msg.content}`;
+        document.getElementById("messages").appendChild(li);
+    }
+</script>
+</body>
+</html>
